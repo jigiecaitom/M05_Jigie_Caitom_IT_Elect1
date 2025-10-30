@@ -1,160 +1,163 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useEffect } from 'react';
 import {
   View,
-  Text,
   TextInput,
-  TouchableOpacity,
+  Button,
   FlatList,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
+  Text,
   StyleSheet,
-} from "react-native";
+  ImageBackground,
+  Image,
+  Alert,
+} from 'react-native';
+import { openDatabase } from './database';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export default function Messenger() {
+export default function Messenger({ navigation }) {
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
 
-  // Set your profile picture
-  const userAvatar = "https://i.pravatar.cc/150?img=5";
-  const friendAvatar = "https://i.pravatar.cc/150?img=12";
+  useEffect(() => {
+    const loadUserAndMessages = async () => {
+      try {
+        const savedUser = await AsyncStorage.getItem('user');
+        if (!savedUser) {
+          navigation.reset({ index: 0, routes: [{ name: 'UserForm' }] });
+          return;
+        }
 
-  const flatListRef = useRef();
-
-  const sendMessage = () => {
-    if (!input.trim()) return;
-
-    const newMessage = {
-      id: Date.now().toString(),
-      text: input,
-      sender: "user", // "user" or "friend"
+        const user = JSON.parse(savedUser);
+        setCurrentUser(user);
+        loadMessages();
+      } catch (err) {
+        console.error('Error loading user or messages:', err);
+      }
     };
+    loadUserAndMessages();
+  }, []);
 
-    setMessages((prev) => [...prev, newMessage]);
-    setInput("");
-
-    // Optional: simulate friend reply
-    // Comment this out if you don't want automatic replies
-    setTimeout(() => {
-      const friendMessage = {
-        id: (Date.now() + 1).toString(),
-        text: "Hello! I received your message 😊",
-        sender: "friend",
-      };
-      setMessages((prev) => [...prev, friendMessage]);
-    }, 1500);
+  const loadMessages = async () => {
+    try {
+      const db = await openDatabase();
+      const rows = await db.getAllAsync(
+        'SELECT * FROM messages ORDER BY id DESC'
+      );
+      setMessages(rows);
+    } catch (err) {
+      console.error('Error loading messages:', err);
+    }
   };
 
-  const renderItem = ({ item }) => {
-    const isUser = item.sender === "user";
-    return (
-      <View
-        style={[
-          styles.messageContainer,
-          isUser ? styles.userMessageContainer : styles.friendMessageContainer,
-        ]}
-      >
-        {!isUser && <Image source={{ uri: friendAvatar }} style={styles.avatar} />}
-        <View style={[styles.bubble, isUser ? styles.userBubble : styles.friendBubble]}>
-          <Text style={styles.messageText}>{item.text}</Text>
-        </View>
-        {isUser && <Image source={{ uri: userAvatar }} style={styles.avatar} />}
-      </View>
-    );
+  const sendMessage = async () => {
+    if (!input.trim() || !currentUser) return;
+
+    try {
+      const db = await openDatabase();
+      const timestamp = new Date().toISOString();
+
+      // Insert message using correct columns
+      await db.runAsync(
+        'INSERT INTO messages (senderId, receiverId, message, timestamp) VALUES (?, ?, ?, ?)',
+        [currentUser.id, 0, input, timestamp] // receiverId = 0 (placeholder)
+      );
+
+      setInput('');
+      loadMessages();
+    } catch (err) {
+      console.error('Error sending message:', err);
+      Alert.alert('Error', 'Could not send message.');
+    }
+  };
+
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem('user');
+    navigation.reset({ index: 0, routes: [{ name: 'UserForm' }] });
   };
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={90}
-    >
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 10 }}
-        onContentSizeChange={() => flatListRef.current.scrollToEnd({ animated: true })}
-      />
+    <ImageBackground
+      source={require('./assets/back.jpg')}
+      style={styles.background}>
+      <View style={styles.container}>
+        <Button title="Logout" color="red" onPress={handleLogout} />
 
-      <View style={styles.inputContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Type a message..."
-          value={input}
-          onChangeText={setInput}
+        <FlatList
+          data={messages}
+          inverted
+          keyExtractor={(item) => item.id?.toString() ?? Math.random().toString()}
+          renderItem={({ item }) => (
+            <View
+              style={[
+                styles.messageBubble,
+                item.senderId === currentUser?.id
+                  ? styles.myMessage
+                  : styles.otherMessage,
+              ]}>
+              <View style={styles.row}>
+                <Image
+                  source={
+                    item.senderId === currentUser?.id
+                      ? require('./assets/p1.jpg')
+                      : require('./assets/p2.jpg')
+                  }
+                  style={styles.profilePic}
+                />
+                <View style={styles.textContainer}>
+                  <Text style={styles.sender}>
+                    {item.senderId === currentUser?.id ? 'You' : 'Other'}
+                  </Text>
+                  <Text style={styles.text}>{item.message}</Text>
+                  <Text style={styles.time}>
+                    {new Date(item.timestamp).toLocaleTimeString()}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
         />
-        <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
-          <Text style={styles.sendText}>Send</Text>
-        </TouchableOpacity>
+
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            value={input}
+            onChangeText={setInput}
+            placeholder="Type a message..."
+            placeholderTextColor="#aaa"
+          />
+          <Button title="Send" color="#1877F2" onPress={sendMessage} />
+        </View>
       </View>
-    </KeyboardAvoidingView>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  messageContainer: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    marginVertical: 5,
-    maxWidth: "80%",
-  },
-  userMessageContainer: {
-    alignSelf: "flex-end",
-    justifyContent: "flex-end",
-  },
-  friendMessageContainer: {
-    alignSelf: "flex-start",
-    justifyContent: "flex-start",
-  },
-  bubble: {
-    borderRadius: 15,
-    padding: 10,
-  },
-  userBubble: {
-    backgroundColor: "#DCF8C6",
-    marginLeft: 5,
-  },
-  friendBubble: {
-    backgroundColor: "#fff",
-    marginRight: 5,
-  },
-  messageText: {
-    fontSize: 16,
-  },
-  avatar: {
-    width: 35,
-    height: 35,
-    borderRadius: 35 / 2,
-  },
+  background: { flex: 1 },
+  container: { flex: 1, padding: 10 },
+  row: { flexDirection: 'row', alignItems: 'flex-start' },
+  profilePic: { width: 40, height: 40, borderRadius: 20, marginRight: 8 },
+  textContainer: { flexShrink: 1, maxWidth: '85%' },
+  messageBubble: { marginVertical: 5, padding: 10, borderRadius: 10 },
+  myMessage: { backgroundColor: '#DCF8C6', alignSelf: 'flex-end' },
+  otherMessage: { backgroundColor: '#E4E6EB', alignSelf: 'flex-start' },
+  sender: { fontWeight: 'bold', color: '#333' },
+  text: { fontSize: 16 },
+  time: { fontSize: 10, color: '#666', marginTop: 4 },
   inputContainer: {
-    flexDirection: "row",
-    padding: 10,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderColor: "#ddd",
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
   input: {
     flex: 1,
+    borderColor: '#ccc',
     borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 25,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    borderRadius: 6,
+    padding: 8,
     marginRight: 10,
-    backgroundColor: "#f9f9f9",
-  },
-  sendButton: {
-    backgroundColor: "#0b93f6",
-    borderRadius: 25,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  sendText: {
-    color: "#fff",
-    fontWeight: "bold",
   },
 });
